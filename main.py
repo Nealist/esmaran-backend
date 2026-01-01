@@ -1,14 +1,9 @@
-from flask import Flask, request, jsonify, send_file
-from flask_cors import CORS
-import yt_dlp
 import os
 import uuid
-# MoviePy yerine daha hafif bir mantık deneyeceğiz veya ayar ekleyeceğiz
-from moviepy.editor import VideoFileClip, TextClip, CompositeVideoClip
-from moviepy.config import change_settings
+import yt_dlp
+from flask import Flask, request, jsonify, send_file
+from flask_cors import CORS
 
-# ÖNEMLİ: Render gibi yerlerde ImageMagick yolu bazen sorun olur
-# Bu kod ImageMagick hatasını bypass etmeye çalışır
 app = Flask(__name__)
 CORS(app)
 
@@ -16,28 +11,40 @@ UPLOAD_FOLDER = 'processed'
 if not os.path.exists(UPLOAD_FOLDER):
     os.makedirs(UPLOAD_FOLDER)
 
-@app.route('/')
-def home():
-    return "Esmaran AI Motoru Calisiyor!"
-
 @app.route('/process', methods=['POST'])
 def process_video():
     try:
         data = request.json
         video_url = data.get('url')
+        t_color = data.get('color', 'white').replace('#', '0x') # FFmpeg formatı
+        b_color = data.get('bg_color', 'black').replace('#', '0x')
         
         unique_id = str(uuid.uuid4())[:8]
+        input_path = f"in_{unique_id}.mp4"
         output_filename = f"esmaran_{unique_id}.mp4"
         output_path = os.path.join(UPLOAD_FOLDER, output_filename)
 
-        # ŞİMDİLİK SADECE İNDİRME TESTİ (Motorun çalışıp çalışmadığını anlamak için)
-        ydl_opts = {
-            'format': 'best',
-            'outtmpl': output_path,
-        }
-        
+        # 1. VİDEOYU İNDİR
+        ydl_opts = {'format': 'best', 'outtmpl': input_path}
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             ydl.download([video_url])
+
+        # 2. ALTYAZIYI FFmpeg İLE BAS (En Sağlam Yol)
+        # ImageMagick gerektirmez, doğrudan sistem komutu kullanır
+        y_pos = data.get('y', 100) # Siteden gelen Y konumu
+        
+        # Basit bir yazı basma komutu (drawtext)
+        cmd = (
+            f'ffmpeg -i {input_path} -vf "drawtext=text=\'ESMARAN AI\':fontcolor={t_color}:'
+            f'fontsize=24:box=1:boxcolor={b_color}@0.8:x=(w-text_w)/2:y={y_pos}+200" '
+            f'-codec:a copy {output_path}'
+        )
+        
+        os.system(cmd)
+
+        # Temizlik
+        if os.path.exists(input_path):
+            os.remove(input_path)
 
         return jsonify({
             "status": "success",
