@@ -19,10 +19,9 @@ def process_video():
         data = request.json
         video_url = data.get('url')
         t_color = data.get('color', '#ffffff').replace('#', '0x')
-        # Ölçekleme: Ön izleme ile video arasındaki boyut farkını kapatır
-        f_size = int(data.get('font_size', 20)) * 2.2
-        x_pos = int(data.get('x_pos', 0)) * 2.2
-        y_pos = int(data.get('y_pos', 0)) * 2.2
+        f_size = int(data.get('font_size', 20)) * 2.5
+        x_pos = int(data.get('x_pos', 0)) * 2.5
+        y_pos = int(data.get('y_pos', 0)) * 2.5
         bg_on = data.get('bg', True)
         
         unique_id = str(uuid.uuid4())[:8]
@@ -34,45 +33,49 @@ def process_video():
         with yt_dlp.YoutubeDL({'format': 'best', 'outtmpl': input_file, 'quiet': True}) as ydl:
             ydl.download([video_url])
 
-        # 2. Ses Analizi
+        # 2. Ses Analizi (Colab Tarzı Tek Seferde Dinleme)
         audio_path = f"tmp_{unique_id}.wav"
         subprocess.run(['ffmpeg', '-i', input_file, '-ar', '16000', '-ac', '1', audio_path, '-y'], check=True)
         
         recognizer = sr.Recognizer()
-        # 'auto' kaynak dili sayesinde her dilden Türkçe'ye çeviri yapar
         translator = GoogleTranslator(source='auto', target='tr')
         
         filter_parts = []
         with sr.AudioFile(audio_path) as source:
             duration = int(source.DURATION)
-            # 4 saniyelik bloklar sunucuyu yormaz ve takılmayı önler
-            for i in range(0, duration, 4):
+            # 5 saniyelik daha geniş parçalar sunucuyu rahatlatır
+            for i in range(0, duration, 5):
                 try:
-                    audio_segment = recognizer.record(source, duration=4)
-                    # Google API bağlantı süresini 10 saniyeye çıkardık (Timeout önlemi)
-                    text = recognizer.recognize_google(audio_segment, language='en-US') 
+                    # offset kullanarak her seferinde kaldığı yerden devam eder
+                    audio_segment = recognizer.record(source, duration=5)
+                    # language=None yaparak Google'ın dili kendi bulmasını sağlıyoruz (Hintçe çözümü)
+                    text = recognizer.recognize_google(audio_segment, language=None) 
                     
                     if text:
                         tr_text = translator.translate(text)
-                        # TEK SATIR MANTIĞI: Çok uzun metinleri kısaltır
-                        clean_text = tr_text.replace("'", "").replace(":", "").strip()
-                        if len(clean_text) > 45: clean_text = clean_text[:42] + "..."
+                        # Tek satırda tut, özel karakterleri temizle
+                        clean_text = tr_text.replace("'", "").replace(":", "").replace('"', '')
+                        if len(clean_text) > 40: clean_text = clean_text[:37] + "..."
 
-                        box_str = f":box=1:boxcolor=0x000000@0.7:boxborderw=12" if bg_on else ""
-                        part = f"drawtext=text='{clean_text}':fontcolor={t_color}:fontsize={f_size}{box_str}:x=(w-text_w)/2+({x_pos}):y=(h-text_h)/2+({y_pos}):enable='between(t,{i},{i+4})'"
+                        box_str = f":box=1:boxcolor=0x000000@0.7:boxborderw=10" if bg_on else ""
+                        part = f"drawtext=text='{clean_text}':fontcolor={t_color}:fontsize={f_size}{box_str}:x=(w-text_w)/2+({x_pos}):y=(h-text_h)/2+({y_pos}):enable='between(t,{i},{i+5})'"
                         filter_parts.append(part)
                 except:
-                    continue # Hata anında videoyu kesme, devam et
+                    continue 
 
+        # Filtre yoksa videoyu bozma
         v_filter = ",".join(filter_parts) if filter_parts else "null"
         
-        # 3. Final Render (En Hızlı Mod)
+        # 3. Final Render (Kopyalama değil, yeniden kodlama - libx264)
         cmd = [
             'ffmpeg', '-y', '-i', input_file,
-            '-vf', v_filter, '-c:v', 'libx264', '-preset', 'ultrafast', '-c:a', 'copy', output_path
+            '-vf', v_filter,
+            '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '23',
+            '-c:a', 'aac', '-b:a', '128k', output_path
         ]
         
         subprocess.run(cmd, check=True)
+        
         for f in [input_file, audio_path]:
             if os.path.exists(f): os.remove(f)
 
@@ -86,4 +89,4 @@ def download_file(filename):
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=10000)
-                    
+    
