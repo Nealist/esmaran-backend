@@ -20,22 +20,21 @@ def process_video():
         data = request.json
         video_url = data.get('url')
         t_color = data.get('color', '#ffffff').replace('#', '0x')
-        w_val = int(data.get('w_val', 120)) # Yazı kutusu genişliği
-        h_val = int(data.get('h_val', 40))  # Yazı kutusu yüksekliği
-        x_pos = data.get('x_pos', 0)
-        y_pos = data.get('y_pos', 0)
-        bg_enabled = data.get('bg', True)
+        f_size = int(data.get('font_size', 25))
+        x_pos = int(data.get('x_pos', 0))
+        y_pos = int(data.get('y_pos', 0))
+        box_on = data.get('bg', True)
         
         unique_id = str(uuid.uuid4())[:8]
         input_file = f"in_{unique_id}.mp4"
         output_name = f"esmaran_{unique_id}.mp4"
         output_path = os.path.join(UPLOAD_FOLDER, output_name)
 
-        # 1. Video İndir
+        # 1. Video İndirme
         with yt_dlp.YoutubeDL({'format': 'best', 'outtmpl': input_file}) as ydl:
             ydl.download([video_url])
 
-        # 2. Ses Analizi
+        # 2. Hassas Ses Analizi
         audio_path = f"tmp_{unique_id}.wav"
         subprocess.run(['ffmpeg', '-i', input_file, '-ar', '16000', '-ac', '1', audio_path, '-y'], check=True)
         
@@ -44,29 +43,27 @@ def process_video():
         
         filter_parts = []
         with sr.AudioFile(audio_path) as source:
+            # 3'er saniyelik çok kısa dilimlerle kelime takibi
             duration = int(source.DURATION)
-            for i in range(0, duration, 5):
+            for i in range(0, duration, 3):
                 try:
-                    audio_segment = recognizer.record(source, duration=5)
-                    raw_text = recognizer.recognize_google(audio_segment, language='en-US')
-                    tr_text = translator.translate(raw_text)
-                    # Kutunun genişliğine göre yazıyı sar
-                    wrapped = "\n".join(textwrap.wrap(tr_text, width=int(w_val/6)))
+                    audio_segment = recognizer.record(source, duration=3)
+                    text = recognizer.recognize_google(audio_segment, language='en-US')
+                    tr_text = translator.translate(text)
+                    # Satır genişliğini sınırla (Telefona uygun)
+                    wrapped = "\n".join(textwrap.wrap(tr_text, width=20))
                     
-                    # Dinamik FFmpeg filtresi (Enlem ve boylam ayarlı)
-                    # FontSize h_val değerine göre otomatik oranlanır
-                    box_cmd = f":box=1:boxcolor=0x000000@0.7:boxborderw={h_val/4}" if bg_enabled else ""
-                    part = f"drawtext=text='{wrapped}':fontcolor={t_color}:fontsize={h_val/2.2}{box_cmd}:x=(w-text_w)/2+({x_pos}):y=(h-text_h)/2+({y_pos}):enable='between(t,{i},{i+5})'"
+                    box_str = f":box=1:boxcolor=0x000000@0.7:boxborderw=10" if box_on else ""
+                    part = f"drawtext=text='{wrapped}':fontcolor={t_color}:fontsize={f_size}{box_str}:x=(w-text_w)/2+({x_pos}):y=(h-text_h)/2+({y_pos}):enable='between(t,{i},{i+3})'"
                     filter_parts.append(part)
                 except: continue
 
-        video_filter = ",".join(filter_parts) if filter_parts else "null"
+        v_filter = ",".join(filter_parts) if filter_parts else "drawtext=text=' '"
         
-        # 3. Final Video Üretimi
+        # 3. İşleme
         cmd = [
             'ffmpeg', '-y', '-i', input_file,
-            '-vf', video_filter,
-            '-preset', 'ultrafast', '-c:a', 'copy', output_path
+            '-vf', v_filter, '-preset', 'ultrafast', '-c:a', 'copy', output_path
         ]
         
         subprocess.run(cmd, check=True)
