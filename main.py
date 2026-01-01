@@ -5,7 +5,7 @@ import subprocess
 from flask import Flask, request, jsonify, send_file
 from flask_cors import CORS
 import speech_recognition as sr
-from deep_translator import GoogleTranslator # Hata veren kütüphane değiştirildi
+from deep_translator import GoogleTranslator
 
 app = Flask(__name__)
 CORS(app)
@@ -13,34 +13,46 @@ CORS(app)
 UPLOAD_FOLDER = 'processed'
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
-def transcribe_and_translate(video_path):
-    # Videonun sesini ayıkla (.wav formatına çevir)
-    audio_path = f"tmp_{uuid.uuid4().hex}.wav"
+def generate_srt(video_path, unique_id):
+    # Sesi ayıkla
+    audio_path = f"tmp_{unique_id}.wav"
     subprocess.run(['ffmpeg', '-i', video_path, '-ar', '16000', '-ac', '1', audio_path, '-y'], check=True)
     
     recognizer = sr.Recognizer()
-    try:
-        with sr.AudioFile(audio_path) as source:
-            audio_data = recognizer.record(source)
-            # Sesi metne çevir (İngilizce)
-            english_text = recognizer.recognize_google(audio_data, language='en-US')
-            # Türkçe'ye çevir (Deep Translator ile)
-            translated = GoogleTranslator(source='en', target='tr').translate(english_text)
-            return translated
-    except Exception as e:
-        print(f"Çeviri hatası: {e}")
-        return "Altyazi Hazirlanamadi - ESMARAN AI"
-    finally:
-        if os.path.exists(audio_path): os.remove(audio_path)
+    translator = GoogleTranslator(source='en', target='tr')
+    srt_content = ""
+    
+    with sr.AudioFile(audio_path) as source:
+        duration = int(source.DURATION)
+        # Videoyu 5'er saniyelik dilimlerle işle
+        for i in range(0, duration, 5):
+            try:
+                offset = i
+                audio_segment = recognizer.record(source, duration=5)
+                text = recognizer.recognize_google(audio_segment, language='en-US')
+                translated = translator.translate(text)
+                
+                # SRT Formatı oluştur (00:00:05 -> 00:00:10 gibi)
+                start = f"00:00:{i:02d},000"
+                end = f"00:00:{min(i+5, duration):02d},000"
+                srt_content += f"{(i//5)+1}\n{start} --> {end}\n{translated}\n\n"
+            except:
+                continue
+                
+    srt_path = f"sub_{unique_id}.srt"
+    with open(srt_path, "w", encoding="utf-8") as f:
+        f.write(srt_content)
+    
+    if os.path.exists(audio_path): os.remove(audio_path)
+    return srt_path
 
 @app.route('/process', methods=['POST'])
 def process_video():
     try:
         data = request.json
         video_url = data.get('url')
-        t_color = data.get('color', '#ffffff').replace('#', '0x')
-        f_size = data.get('font_size', '24')
-        y_val = data.get('y_pos', 0)
+        t_color = data.get('color', '#ffffff') # FFmpeg subtitles için Hex yeterli
+        f_size = data.get('font_size', '20')
         
         unique_id = str(uuid.uuid4())[:8]
         input_file = f"in_{unique_id}.mp4"
@@ -51,21 +63,23 @@ def process_video():
         with yt_dlp.YoutubeDL({'format': 'best', 'outtmpl': input_file}) as ydl:
             ydl.download([video_url])
 
-        # 2. Dinle ve Çevir (Burası biraz zaman alır)
-        altyazi_metni = transcribe_and_translate(input_file)
+        # 2. Dinamik SRT (Altyazı Dosyası) Oluştur
+        srt_file = generate_srt(input_file, unique_id)
 
-        # 3. Altyazıyı Videoya Bas (FFmpeg)
-        # Metin çok uzunsa videoda taşmasın diye basitçe kesiyoruz
-        final_text = (altyazi_metni[:60] + '...') if len(altyazi_metni) > 60 else altyazi_metni
-        
+        # 3. SRT'yi Videoya Göm (Saniye saniye değişen mod)
+        # Not: Force_style ile renk ve boyutu ayarlıyoruz
+        style = f"FontSize={f_size},PrimaryColour={t_color.replace('#','&H00')}"
         cmd = [
             'ffmpeg', '-y', '-i', input_file,
-            '-vf', f"drawtext=text='{final_text}':fontcolor={t_color}:fontsize={f_size}:box=1:boxcolor=0x000000@0.6:x=(w-text_w)/2:y=(h-text_h)/2+({y_val})",
+            '-vf', f"subtitles={srt_file}:force_style='{style}'",
             '-preset', 'ultrafast', '-c:a', 'copy', output_path
         ]
         
         subprocess.run(cmd, check=True)
-        if os.path.exists(input_file): os.remove(input_file)
+        
+        # Temizlik
+        for f in [input_file, srt_file]:
+            if os.path.exists(f): os.remove(f)
 
         return jsonify({"status": "success", "download_url": f"https://{request.host}/download/{output_name}"})
     except Exception as e:
@@ -76,7 +90,7 @@ def download_file(filename):
     return send_file(os.path.join(UPLOAD_FOLDER, filename), as_attachment=True)
 
 @app.route('/')
-def home(): return "ESMARAN AI AKTIF"
+def home(): return "ESMARAN AI DINAMIK MOD AKTIF"
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=10000)
