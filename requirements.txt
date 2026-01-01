@@ -2,6 +2,6 @@ flask
 flask-cors
 yt_dlp
 SpeechRecognition
-googletrans==4.0.0-rc1
+deep-translator
 pydub
 
