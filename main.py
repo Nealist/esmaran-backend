@@ -18,9 +18,8 @@ def process_video():
         data = request.json
         video_url = data.get('url')
         
-        # Siteden gelen rengi temizle ve FFmpeg formatına (0xRRGGBB) çevir
+        # Renk formatlarını FFmpeg'in sevdiği 0xRRGGBB formatına zorluyoruz
         t_color = data.get('color', '#ffffff').replace('#', '0x')
-        b_color = data.get('bg_color', '#000000').replace('#', '0x')
         f_size = data.get('font_size', '28')
         y_val = data.get('y_pos', 0)
         bg_enabled = data.get('bg', True)
@@ -30,18 +29,19 @@ def process_video():
         output_name = f"esmaran_{unique_id}.mp4"
         output_path = os.path.join(UPLOAD_FOLDER, output_name)
 
-        # 1. Video İndirme
+        # 1. Hızlı Video İndirme
         ydl_opts = {'format': 'best', 'outtmpl': input_file, 'noplaylist': True}
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             ydl.download([video_url])
 
-        # 2. FFmpeg Altyazı Yazma (Garantili Hex Renk Sistemi)
-        box_cmd = f":box=1:boxcolor={b_color}@0.6" if bg_enabled else ""
+        # 2. FFmpeg ile Yazı Yazma (Hex Renk Sabitlemeli)
+        # Arka plan kutusu istenirse siyah %60 şeffaf kutu ekler
+        box_str = ":box=1:boxcolor=0x000000@0.6" if bg_enabled else ""
         
-        # Yazıyı videoya tam senin ayarladığın konumda basar
+        # Sitedeki sürüklemeyi videonun merkezine oranlıyoruz
         cmd = [
             'ffmpeg', '-y', '-i', input_file,
-            '-vf', f"drawtext=text='ESMARAN AI':fontcolor={t_color}:fontsize={f_size}{box_cmd}:x=(w-text_w)/2:y=(h-text_h)/2+({y_val})",
+            '-vf', f"drawtext=text='ESMARAN AI':fontcolor={t_color}:fontsize={f_size}{box_str}:x=(w-text_w)/2:y=(h-text_h)/2+({y_val})",
             '-preset', 'ultrafast', '-c:a', 'copy', output_path
         ]
         
