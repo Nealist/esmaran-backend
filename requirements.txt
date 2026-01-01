@@ -1,4 +1,6 @@
 flask
 flask-cors
 yt-dlp
-moviepy
+moviepy==1.0.3
+proglog
+
