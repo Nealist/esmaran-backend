@@ -33,45 +33,49 @@ def process_video():
         with yt_dlp.YoutubeDL({'format': 'best', 'outtmpl': input_file, 'quiet': True}) as ydl:
             ydl.download([video_url])
 
-        # 2. Ses Analizi (Colab Tarzı Tek Seferde Dinleme)
+        # 2. Ses Analizi Hazırlığı
         audio_path = f"tmp_{unique_id}.wav"
         subprocess.run(['ffmpeg', '-i', input_file, '-ar', '16000', '-ac', '1', audio_path, '-y'], check=True)
         
         recognizer = sr.Recognizer()
-        translator = GoogleTranslator(source='auto', target='tr')
+        # Ortam gürültüsünü otomatik ayarla (En önemli kısım burası!)
+        recognizer.energy_threshold = 300 
         
+        translator = GoogleTranslator(source='auto', target='tr')
         filter_parts = []
+
         with sr.AudioFile(audio_path) as source:
             duration = int(source.DURATION)
-            # 5 saniyelik daha geniş parçalar sunucuyu rahatlatır
-            for i in range(0, duration, 5):
+            # 3 saniyelik çok kısa parçalarla Google'ı kandırıyoruz (Timeout yememek için)
+            for i in range(0, duration, 3):
                 try:
-                    # offset kullanarak her seferinde kaldığı yerden devam eder
-                    audio_segment = recognizer.record(source, duration=5)
-                    # language=None yaparak Google'ın dili kendi bulmasını sağlıyoruz (Hintçe çözümü)
-                    text = recognizer.recognize_google(audio_segment, language=None) 
+                    audio_segment = recognizer.record(source, duration=3)
+                    # language verilmediğinde Google her dili (Hintçe dahil) otomatik algılar
+                    text = recognizer.recognize_google(audio_segment) 
                     
-                    if text:
+                    if text and len(text.strip()) > 1:
                         tr_text = translator.translate(text)
-                        # Tek satırda tut, özel karakterleri temizle
-                        clean_text = tr_text.replace("'", "").replace(":", "").replace('"', '')
-                        if len(clean_text) > 40: clean_text = clean_text[:37] + "..."
-
+                        clean_text = tr_text.replace("'", "").replace(":", "").replace('"', '').strip()
+                        
                         box_str = f":box=1:boxcolor=0x000000@0.7:boxborderw=10" if bg_on else ""
-                        part = f"drawtext=text='{clean_text}':fontcolor={t_color}:fontsize={f_size}{box_str}:x=(w-text_w)/2+({x_pos}):y=(h-text_h)/2+({y_pos}):enable='between(t,{i},{i+5})'"
+                        # FFmpeg filtresini zorla listeye ekle
+                        part = f"drawtext=text='{clean_text}':fontcolor={t_color}:fontsize={f_size}{box_str}:x=(w-text_w)/2+({x_pos}):y=(h-text_h)/2+({y_pos}):enable='between(t,{i},{i+3})'"
                         filter_parts.append(part)
                 except:
-                    continue 
+                    continue
 
-        # Filtre yoksa videoyu bozma
-        v_filter = ",".join(filter_parts) if filter_parts else "null"
+        # Eğer hala yazı bulunamadıysa videonun ortasına "Esmaran AI" yaz ki boş inmesin
+        if not filter_parts:
+            filter_parts.append("drawtext=text='Altyazi Algilanamadi':fontcolor=white:fontsize=30:x=(w-text_w)/2:y=(h-text_h)/2")
+
+        v_filter = ",".join(filter_parts)
         
-        # 3. Final Render (Kopyalama değil, yeniden kodlama - libx264)
+        # 3. Final Render (AAC kodlayıcıyı zorla aktif ettik)
         cmd = [
             'ffmpeg', '-y', '-i', input_file,
             '-vf', v_filter,
-            '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '23',
-            '-c:a', 'aac', '-b:a', '128k', output_path
+            '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '25',
+            '-c:a', 'aac', '-tight', 'experimental', output_path
         ]
         
         subprocess.run(cmd, check=True)
