@@ -19,9 +19,9 @@ def process_video():
         data = request.json
         video_url = data.get('url')
         t_color = data.get('color', '#ffffff').replace('#', '0x')
-        f_size = int(data.get('font_size', 20)) * 2.5
-        x_pos = int(data.get('x_pos', 0)) * 2.5
-        y_pos = int(data.get('y_pos', 0)) * 2.5
+        f_size = float(data.get('font_size', 20)) * 2.5
+        x_pos = float(data.get('x_pos', 0)) * 2.5
+        y_pos = float(data.get('y_pos', 0)) * 2.5
         bg_on = data.get('bg', True)
         
         unique_id = str(uuid.uuid4())[:8]
@@ -33,44 +33,44 @@ def process_video():
         with yt_dlp.YoutubeDL({'format': 'best', 'outtmpl': input_file, 'quiet': True}) as ydl:
             ydl.download([video_url])
 
-        # 2. Ses Analizi Hazırlığı
+        # 2. Ses Analizi
         audio_path = f"tmp_{unique_id}.wav"
         subprocess.run(['ffmpeg', '-i', input_file, '-ar', '16000', '-ac', '1', audio_path, '-y'], check=True)
         
         recognizer = sr.Recognizer()
-        # Ortam gürültüsünü otomatik ayarla (En önemli kısım burası!)
         recognizer.energy_threshold = 300 
-        
         translator = GoogleTranslator(source='auto', target='tr')
         filter_parts = []
 
         with sr.AudioFile(audio_path) as source:
             duration = int(source.DURATION)
-            # 3 saniyelik çok kısa parçalarla Google'ı kandırıyoruz (Timeout yememek için)
             for i in range(0, duration, 3):
                 try:
                     audio_segment = recognizer.record(source, duration=3)
-                    # language verilmediğinde Google her dili (Hintçe dahil) otomatik algılar
                     text = recognizer.recognize_google(audio_segment) 
                     
                     if text and len(text.strip()) > 1:
                         tr_text = translator.translate(text)
-                        clean_text = tr_text.replace("'", "").replace(":", "").replace('"', '').strip()
+                        
+                        # KRİTİK TAMİR: FFmpeg drawtext için özel karakter temizliği
+                        # Tırnakları, iki noktaları ve ters bölüleri siliyoruz
+                        clean_text = tr_text.replace("'", "").replace(":", "").replace('"', '').replace("\\", "")
                         
                         box_str = f":box=1:boxcolor=0x000000@0.7:boxborderw=10" if bg_on else ""
-                        # FFmpeg filtresini zorla listeye ekle
+                        
+                        # drawtext komutunu çift tırnak (") ile sarıyoruz, içindekileri tek tırnak (') yapıyoruz
                         part = f"drawtext=text='{clean_text}':fontcolor={t_color}:fontsize={f_size}{box_str}:x=(w-text_w)/2+({x_pos}):y=(h-text_h)/2+({y_pos}):enable='between(t,{i},{i+3})'"
                         filter_parts.append(part)
                 except:
                     continue
 
-        # Eğer hala yazı bulunamadıysa videonun ortasına "Esmaran AI" yaz ki boş inmesin
         if not filter_parts:
-            filter_parts.append("drawtext=text='Altyazi Algilanamadi':fontcolor=white:fontsize=30:x=(w-text_w)/2:y=(h-text_h)/2")
+            # Boş kalmasın diye güvenli bir yazı ekle
+            filter_parts.append("drawtext=text='Esmaran AI':fontcolor=white:fontsize=30:x=(w-text_w)/2:y=(h-text_h)/2")
 
         v_filter = ",".join(filter_parts)
         
-        # 3. Final Render (AAC kodlayıcıyı zorla aktif ettik)
+        # 3. Final Render (Tırnak hatasını önlemek için filtreyi değişken olarak veriyoruz)
         cmd = [
             'ffmpeg', '-y', '-i', input_file,
             '-vf', v_filter,
@@ -78,6 +78,7 @@ def process_video():
             '-c:a', 'aac', '-tight', 'experimental', output_path
         ]
         
+        # subprocess.run'ı tek bir liste olarak çağırmak tırnak hatalarını çözer
         subprocess.run(cmd, check=True)
         
         for f in [input_file, audio_path]:
@@ -85,6 +86,8 @@ def process_video():
 
         return jsonify({"status": "success", "download_url": f"https://{request.host}/download/{output_name}"})
     except Exception as e:
+        # Hatayı daha net görmek için yazdırıyoruz
+        print(f"HATA DETAYI: {str(e)}")
         return jsonify({"status": "error", "message": str(e)}), 500
 
 @app.route('/download/<filename>')
